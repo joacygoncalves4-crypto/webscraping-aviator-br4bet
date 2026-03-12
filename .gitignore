@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.log
+.venv/
+venv/
+*.pyc
+.history/
+.vscode/
+node_modules/
+dist/
+build/
+*.spec
+chromedriver.exe
+undetected_chromedriver.exe
