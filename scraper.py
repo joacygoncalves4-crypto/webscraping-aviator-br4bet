@@ -417,8 +417,8 @@ class AviatorScraper:
     def send_to_webhook(self, multiplier: float):
         payload = {
             "multiplier": multiplier,
-            "timestamp":  datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-            "source":     "aviator-scraper",
+            "ts":         int(time.time() * 1000),
+            "source":     "aviator-history-next",
         }
         try:
             resp = requests.post(WEBHOOK_URL, json=payload, timeout=10)
