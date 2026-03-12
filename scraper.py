@@ -99,14 +99,20 @@ class AviatorScraper:
 
     # ─── Helpers ──────────────────────────────────────────────────────────────
     def _try_click(self, xpath: str, label: str, timeout: int = 5) -> bool:
-        """Tenta clicar em um elemento por XPath. Retorna True se conseguiu."""
+        """Tenta clicar em um elemento por XPath. Filtra apenas elementos visíveis."""
         try:
-            el = WebDriverWait(self.driver, timeout).until(
-                EC.element_to_be_clickable((By.XPATH, xpath))
+            elements = WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_all_elements_located((By.XPATH, xpath))
             )
-            el.click()
-            log.info(f"✔ Clicado: {label}")
-            return True
+            for el in elements:
+                if el.is_displayed():
+                    # Garante que está clicável antes de clicar
+                    self.wait.until(EC.element_to_be_clickable(el))
+                    el.click()
+                    log.info(f"✔ Clicado: {label}")
+                    return True
+            log.debug(f"✗ Elementos encontrados mas nenhum visível: {label}")
+            return False
         except (TimeoutException, NoSuchElementException):
             log.debug(f"✗ Não encontrado: {label}")
             return False
@@ -172,17 +178,12 @@ class AviatorScraper:
         log.info("Aguardando página estabilizar após popups...")
         time.sleep(4)
 
-        # Abre o modal de login clicando em "Entrar"
-        # Tenta múltiplos seletores em sequência com log INFO visível
+        # Abre o modal de login clicando em "Entrar" (focando explicitamente no Desktop)
         login_xpaths = [
+            "//button[contains(., 'Entrar') and contains(@class, 'md:flex')]", 
             "//button[normalize-space(text())='Entrar']",
             "//button[contains(text(),'Entrar')]",
-            "//button[contains(text(),'entrar')]",
-            "//a[normalize-space(text())='Entrar']",
             "//a[contains(text(),'Entrar')]",
-            "//button[contains(@class,'login')]",
-            "//button[contains(@class,'signin')]",
-            "//*[@data-test='login-button']",
         ]
         clicked = False
         for xpath in login_xpaths:
