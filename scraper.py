@@ -206,6 +206,32 @@ class AviatorScraper:
 
         return False
 
+    def handle_post_login_popups(self):
+        """Identifica e fecha popups promocionais que aparecem logo após o login (ex: Hades/Smartico)."""
+        log.info("Verificando popups promocionais pós-login...")
+        time.sleep(3) # Aguarda o popup dinâmico carregar
+
+        popups_to_close = [
+            ("//a[@href='dp:close']", "Popup Hades (Smartico)"),
+            ("//a[contains(@class, 'close-btn')]", "Botão fechar Smartico"),
+            ("//div[contains(@class, 'modal-close')]", "Div fechar modal"),
+            ("//button[contains(@class, 'close')]", "Botão fechar genérico"),
+            ("//*[@data-testid='close-button']", "Close button TestID")
+        ]
+
+        for xpath, label in popups_to_close:
+            if self._try_click(xpath, label, timeout=2):
+                time.sleep(1) # Pequena pausa após fechar
+        
+        # Backup via JS para o seletor Hades específico
+        try:
+            self.driver.execute_script("""
+                var hadesClose = document.querySelector('a[href="dp:close"]');
+                if (hadesClose) hadesClose.click();
+            """)
+        except Exception:
+            pass
+
     # ─── Login ────────────────────────────────────────────────────────────────
     def login(self):
         log.info(f"Acessando {CASINO_URL}...")
@@ -318,8 +344,10 @@ class AviatorScraper:
                 except Exception:
                     pass
 
+            # ANTES de checar login, limpa possíveis popups bloqueadores
+            self.handle_post_login_popups()
+
             # Aguarda um pouco para ver se logou
-            time.sleep(4)
             if self.is_logged_in():
                 log.info("✅ Verificação de Login: SUCESSO!")
                 break
@@ -331,20 +359,10 @@ class AviatorScraper:
             raise Exception("Erro de autenticação: Falha ao confirmar login.")
 
         # Aguarda finalização dos processos de login
-        time.sleep(4)
+        time.sleep(2)
 
-        # Verifica se ainda estamos na tela de login por segurança
-        if "login" in self.driver.current_url.lower():
-             log.warning("⚠️ URL ainda contém 'login'. Fechando modais residuais...")
-        
-        # Fecha banner promocional pós-login ("Indique um amigo")
-        for xpath in [
-            "//button[contains(@class,'close')]",
-            "//*[contains(@class,'ml-auto')]//span[contains(text(),'×') or contains(text(),'✕')]",
-            "//button[contains(@aria-label,'close') or contains(@aria-label,'fechar')]",
-            "//*[contains(@class,'banner')]//button",
-        ]:
-            self._try_click(xpath, "Banner pós-login → fechar", timeout=3)
+        # Fecha banners residuais (Indique e ganhe, etc)
+        self.handle_initial_popups() 
 
         log.info(f"✅ Sessão autenticada. URL: {self.driver.current_url}")
 
