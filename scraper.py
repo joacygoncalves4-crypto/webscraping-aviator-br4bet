@@ -191,6 +191,11 @@ class AviatorScraper:
             "//button[contains(text(), 'Sair') or contains(text(), 'Logout')]",
             "//*[contains(@class, 'wallet')]",
         ]
+        # Se estes existirem, NÃO estamos logados
+        not_logged_indicators = [
+            "//button[contains(., 'Entrar') and contains(@class, 'md:flex')]",
+            "//button[normalize-space(text())='Entrar']",
+        ]
         # Tenta achar indicadores de LOGADO (Saldo, Perfil, Link Aviator)
         for xpath in logged_in_indicators:
             try:
