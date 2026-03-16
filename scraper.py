@@ -191,13 +191,7 @@ class AviatorScraper:
             "//button[contains(text(), 'Sair') or contains(text(), 'Logout')]",
             "//*[contains(@class, 'wallet')]",
         ]
-        # Se estes existirem, NÃO estamos logados
-        not_logged_indicators = [
-            "//button[contains(., 'Entrar') and contains(@class, 'md:flex')]",
-            "//button[normalize-space(text())='Entrar']",
-        ]
-
-        # Tenta achar indicadores de logado
+        # Tenta achar indicadores de LOGADO (Saldo, Perfil, Link Aviator)
         for xpath in logged_in_indicators:
             try:
                 el = self.driver.find_element(By.XPATH, xpath)
@@ -209,22 +203,32 @@ class AviatorScraper:
         
         # SUCESSO ADICIONAL: Se o popup do Hades/Smartico estiver na tela, com certeza logou
         try:
-            hades = self.driver.find_element(By.XPATH, "//a[@href='dp:close']")
-            if hades.is_displayed():
-                log.info("Indicador de login detectado: Popup Hades/Smartico visível.")
-                return True
-        except NoSuchElementException:
+            hades_elements = self.driver.find_elements(By.XPATH, "//a[@href='dp:close']")
+            for h in hades_elements:
+                if h.is_displayed():
+                    log.info("Indicador de login detectado: Popup Hades/Smartico visível.")
+                    return True
+        except Exception:
             pass
 
-        # Se não achou logado, verifica se o botão de Entrar ainda está lá
+        # SUCESSO POR AUSÊNCIA: Se não vemos o botão de entrar, é 99% de chance que logou
+        not_logged_visible = False
         for xpath in not_logged_indicators:
             try:
-                el = self.driver.find_element(By.XPATH, xpath)
-                if el.is_displayed():
-                    log.debug("Ainda deslogado: botão 'Entrar' visível.")
-                    return False
-            except NoSuchElementException:
+                elements = self.driver.find_elements(By.XPATH, xpath)
+                for el in elements:
+                    if el.is_displayed():
+                        not_logged_visible = True
+                        break
+                if not_logged_visible: break
+            except Exception:
                 continue
+
+        if not not_logged_visible:
+            # Se o botão sumiu e não estamos em uma página de erro, assumimos sucesso
+            if "error" not in self.driver.current_url.lower():
+                log.info("Indicador de login (ausência): Botão 'Entrar' não visível. Prosseguindo...")
+                return True
 
         return False
 
