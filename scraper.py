@@ -81,6 +81,8 @@ class AviatorScraper:
         self.wait   = None
         self.last_multipliers = []
         self.total_sent       = 0
+        self.last_webhook_time = time.time()  # Watchdog: para evitar travamentos infinitos
+        self.max_inactivity    = 360           # 6 minutos sem velas = Reinício completo
 
     # ─── Driver ───────────────────────────────────────────────────────────────
     def setup_driver(self):
@@ -268,8 +270,12 @@ class AviatorScraper:
                     break
 
         log.info("Aguardando login processar...")
-        time.sleep(6)
+        time.sleep(8)
 
+        # Verifica se o login foi bem-sucedido conferindo a URL ou elementos de logado
+        if "login" in self.driver.current_url.lower():
+             log.warning("⚠️ Parece que ainda estamos na tela de login. Tentando prosseguir...")
+        
         # Fecha banner promocional pós-login ("Indique um amigo")
         for xpath in [
             "//button[contains(@class,'close')]",
@@ -277,9 +283,9 @@ class AviatorScraper:
             "//button[contains(@aria-label,'close') or contains(@aria-label,'fechar')]",
             "//*[contains(@class,'banner')]//button",
         ]:
-            self._try_click(xpath, "Banner pós-login → fechar", timeout=2)
+            self._try_click(xpath, "Banner pós-login → fechar", timeout=3)
 
-        log.info(f"✅ Login realizado. URL atual: {self.driver.current_url}")
+        log.info(f"✅ Login finalizado. URL atual: {self.driver.current_url}")
 
     # ─── Ir para o Aviator ────────────────────────────────────────────────────
     def navigate_to_aviator(self):
@@ -345,6 +351,9 @@ class AviatorScraper:
                     continue
 
         if not entered_lvl1:
+            # Se falhar aqui, verifica se não deslogou
+            if CASINO_URL in self.driver.current_url and "play" not in self.driver.current_url:
+                raise Exception("Fora da página do jogo! Possível deslogue ou redirecionamento.")
             raise Exception("Iframe nível 1 não encontrado!")
 
         time.sleep(4)  # Aguarda o conteúdo do nível 1 carregar
@@ -424,6 +433,7 @@ class AviatorScraper:
             resp = requests.post(WEBHOOK_URL, json=payload, timeout=10)
             if resp.status_code in (200, 201, 202):
                 self.total_sent += 1
+                self.last_webhook_time = time.time()  # Reseta watchdog
                 log.info(f"✅ Vela enviada: {multiplier}x  (total: {self.total_sent})")
             else:
                 log.warning(f"⚠️  Webhook respondeu {resp.status_code}: {resp.text[:100]}")
@@ -441,15 +451,28 @@ class AviatorScraper:
 
         while True:
             try:
+                # ─── WATCHDOG CHECK ───
+                inactivity_duration = time.time() - self.last_webhook_time
+                if inactivity_duration > self.max_inactivity:
+                    log.error(f"🚨 WATCHDOG: {int(inactivity_duration)}s sem novas velas. Reiniciando tudo...")
+                    raise RuntimeError("Watchdog timeout - Inatividade prolongada detectada.")
+
                 current = self.get_history_multipliers()
 
                 if not current:
                     consecutive_empties += 1
                     log.debug(f"Histórico vazio ({consecutive_empties}/{max_empties})")
+                    
                     if consecutive_empties >= max_empties:
-                        log.warning("Histórico vazio por muito tempo — reconectando iframe...")
+                        log.warning("Histórico vazio por muito tempo — verificando se ainda estamos logados...")
+                        
+                        # Verifica se ainda está na URL correta
+                        if AVIATOR_URL not in self.driver.current_url:
+                            raise Exception(f"Redirecionamento detectado! URL atual: {self.driver.current_url}")
+                        
                         self.switch_to_game_iframe()
                         consecutive_empties = 0
+                    
                     time.sleep(POLL_INTERVAL)
                     continue
 
@@ -479,8 +502,8 @@ class AviatorScraper:
                 log.warning("Iframe perdido — reconectando...")
                 self.switch_to_game_iframe()
                 self.last_multipliers = []
-            except WebDriverException as e:
-                log.error(f"Erro WebDriver: {e}")
+            except (WebDriverException, RuntimeError) as e:
+                log.error(f"Erro no monitoramento: {e}")
                 raise
 
             time.sleep(POLL_INTERVAL)
