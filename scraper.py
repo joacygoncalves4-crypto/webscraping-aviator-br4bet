@@ -119,6 +119,19 @@ class AviatorScraper:
             log.debug(f"✗ Não encontrado: {label}")
             return False
 
+    def _quick_click(self, xpath: str, label: str) -> bool:
+        """Tenta clicar instantaneamente (sem esperar). Útil para popups opcionais."""
+        try:
+            elements = self.driver.find_elements(By.XPATH, xpath)
+            for el in elements:
+                if el.is_displayed():
+                    el.click()
+                    log.info(f"✔ Popup fechado (instantâneo): {label}")
+                    return True
+            return False
+        except Exception:
+            return False
+
     def _try_fill(self, css: str, value: str, label: str, timeout: int = 10) -> bool:
         """Tenta preencher um input por CSS selector."""
         try:
@@ -216,30 +229,30 @@ class AviatorScraper:
         return False
 
     def handle_post_login_popups(self):
-        """Identifica e fecha popups promocionais que aparecem logo após o login (ex: Hades/Smartico)."""
-        log.info("Verificando popups promocionais pós-login...")
-        time.sleep(3) # Aguarda o popup dinâmico carregar
-
+        """Identifica e fecha popups promocionais de forma instantânea (sem travar o loop)."""
         popups_to_close = [
-            ("//a[@href='dp:close']", "Popup Hades (Smartico)"),
+            ("//a[@href='dp:close']", "Hades (Smartico)"),
             ("//a[contains(@class, 'close-btn')]", "Botão fechar Smartico"),
             ("//div[contains(@class, 'modal-close')]", "Div fechar modal"),
             ("//button[contains(@class, 'close')]", "Botão fechar genérico"),
-            ("//*[@data-testid='close-button']", "Close button TestID")
+            ("//*[@data-testid='close-button']", "Close button TestID"),
+            ("//button[contains(text(), 'Não') or contains(text(), 'Agora não')]", "Botão 'Agora não'")
         ]
 
+        any_closed = False
         for xpath, label in popups_to_close:
-            if self._try_click(xpath, label, timeout=2):
-                time.sleep(1) # Pequena pausa após fechar
+            if self._quick_click(xpath, label):
+                any_closed = True
         
-        # Backup via JS para o seletor Hades específico
-        try:
-            self.driver.execute_script("""
-                var hadesClose = document.querySelector('a[href="dp:close"]');
-                if (hadesClose) hadesClose.click();
-            """)
-        except Exception:
-            pass
+        # Backup ultra-rápido via JS para Hades
+        if not any_closed:
+            try:
+                self.driver.execute_script("""
+                    var h = document.querySelector('a[href="dp:close"]');
+                    if (h) h.click();
+                """)
+            except Exception:
+                pass
 
     # ─── Login ────────────────────────────────────────────────────────────────
     def login(self):
@@ -360,30 +373,32 @@ class AviatorScraper:
             raise Exception("Erro de interface: Botão de submit não responde.")
 
         # ─── FASE 2: Policiamento/Verificação (Aguardando autenticação) ───
-        log.info("Aguardando processamento do login (máx 30s)...")
+        log.info("Aguardando confirmação de login (Polling rápido)...")
         authenticated = False
-        for sec in range(15):  # 15 iterações de 2s = 30 segundos
-            # 1. Tenta fechar popups que bloqueiam a visão do login
-            self.handle_post_login_popups()
-
-            # 2. Verifica se logou
+        for sec in range(30):  # 30 iterações de 1s = 30 segundos
+            # 1. Verifica se logou (Instantâneo)
             if self.is_logged_in():
-                log.info(f"✅ Login confirmado após {sec*2}s!")
+                log.info(f"✅ Login confirmado em {sec}s!")
                 authenticated = True
                 break
             
-            log.info(f"   [{sec*2}s] Aguardando autenticação...")
-            time.sleep(2)
+            # 2. Se não logou ainda, limpa possíveis bloqueadores de forma ultra-rápida
+            self.handle_post_login_popups()
+
+            if sec % 5 == 0:
+                log.info(f"   [{sec}s] Aguardando autenticação...")
+            
+            time.sleep(1)
 
         if not authenticated:
             log.error("❌ Falha crítica: Tempo esgotado sem confirmação de login.")
             raise Exception("Erro de autenticação: Timeout ao confirmar sessão.")
 
         # Aguarda estabilizar final
-        time.sleep(2)
+        time.sleep(1)
 
-        # Limpeza final de popups residuais
-        self.handle_initial_popups() 
+        # Limpeza final rápida
+        self.handle_post_login_popups()
 
         log.info(f"✅ Sessão autenticada com sucesso. URL: {self.driver.current_url}")
 
