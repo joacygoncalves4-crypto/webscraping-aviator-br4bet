@@ -167,6 +167,45 @@ class AviatorScraper:
 
         log.info("Popups iniciais tratados.")
 
+    # ─── Verificação de Login ─────────────────────────────────────────────────
+    def is_logged_in(self) -> bool:
+        """Verifica se o usuário está autenticado na br4.bet."""
+        # Se os seletores abaixo existirem, estamos logados
+        logged_in_indicators = [
+            "//span[contains(@class, 'balance')]", 
+            "//div[contains(@class, 'user-info')]",
+            "//a[contains(@href, '/profile')]",
+            "//button[contains(text(), 'Sair') or contains(text(), 'Logout')]",
+            "//*[contains(@class, 'wallet')]",
+        ]
+        # Se estes existirem, NÃO estamos logados
+        not_logged_indicators = [
+            "//button[contains(., 'Entrar') and contains(@class, 'md:flex')]",
+            "//button[normalize-space(text())='Entrar']",
+        ]
+
+        # Tenta achar indicadores de logado
+        for xpath in logged_in_indicators:
+            try:
+                el = self.driver.find_element(By.XPATH, xpath)
+                if el.is_displayed():
+                    log.debug(f"Indicador de logado encontrado: {xpath}")
+                    return True
+            except NoSuchElementException:
+                continue
+        
+        # Se não achou logado, verifica se o botão de Entrar ainda está lá
+        for xpath in not_logged_indicators:
+            try:
+                el = self.driver.find_element(By.XPATH, xpath)
+                if el.is_displayed():
+                    log.debug("Ainda deslogado: botão 'Entrar' visível.")
+                    return False
+            except NoSuchElementException:
+                continue
+
+        return False
+
     # ─── Login ────────────────────────────────────────────────────────────────
     def login(self):
         log.info(f"Acessando {CASINO_URL}...")
@@ -253,28 +292,50 @@ class AviatorScraper:
 
         time.sleep(0.5)
 
-        # Clica em Enviar (seletor auditado: button#legitimuz-action-send-analisys)
-        submitted = self._try_click(
-            "//*[@id='legitimuz-action-send-analisys']",
-            "Submit: id=legitimuz-action-send-analisys",
-            timeout=5,
-        )
-        if not submitted:
-            for xpath in [
-                "//button[@type='submit']",
-                "//button[normalize-space(text())='Entrar']",
-                "//button[contains(text(),'Confirmar')]",
-                "//button[contains(text(),'OK')]",
-            ]:
-                if self._try_click(xpath, f"Submit fallback: {xpath}", timeout=3):
-                    break
+        # Tenta clicar no botão de enviar (múltiplas tentativas)
+        log.info("Tentando submeter formulário de login...")
+        submit_clicked = False
+        for i in range(3):
+            # Clica em Enviar (seletores variados)
+            if self._try_click("//*[@id='legitimuz-action-send-analisys']", "Submit ID", timeout=5):
+                submit_clicked = True
+            elif self._try_click("//button[@type='submit']", "Submit type=submit", timeout=3):
+                submit_clicked = True
+            elif self._try_click("//button[normalize-space(.)='Entrar']", "Submit texto=Entrar", timeout=3):
+                submit_clicked = True
+            
+            # Backup via JavaScript
+            if not submit_clicked:
+                try:
+                    self.driver.execute_script("""
+                        var btn = document.getElementById('legitimuz-action-send-analisys') || 
+                                  document.querySelector('button[type="submit"]') ||
+                                  Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Entrar');
+                        if (btn) btn.click();
+                    """)
+                    log.info("Clique de submit via JS enviado.")
+                    submit_clicked = True
+                except Exception:
+                    pass
 
-        log.info("Aguardando login processar...")
-        time.sleep(8)
+            # Aguarda um pouco para ver se logou
+            time.sleep(4)
+            if self.is_logged_in():
+                log.info("✅ Verificação de Login: SUCESSO!")
+                break
+            else:
+                log.warning(f"⚠️  Tentativa {i+1} de login falhou. Retentando clique...")
 
-        # Verifica se o login foi bem-sucedido conferindo a URL ou elementos de logado
+        if not self.is_logged_in():
+            log.error("❌ Falha crítica: Não foi possível realizar o login após as tentativas.")
+            raise Exception("Erro de autenticação: Falha ao confirmar login.")
+
+        # Aguarda finalização dos processos de login
+        time.sleep(4)
+
+        # Verifica se ainda estamos na tela de login por segurança
         if "login" in self.driver.current_url.lower():
-             log.warning("⚠️ Parece que ainda estamos na tela de login. Tentando prosseguir...")
+             log.warning("⚠️ URL ainda contém 'login'. Fechando modais residuais...")
         
         # Fecha banner promocional pós-login ("Indique um amigo")
         for xpath in [
@@ -285,7 +346,7 @@ class AviatorScraper:
         ]:
             self._try_click(xpath, "Banner pós-login → fechar", timeout=3)
 
-        log.info(f"✅ Login finalizado. URL atual: {self.driver.current_url}")
+        log.info(f"✅ Sessão autenticada. URL: {self.driver.current_url}")
 
     # ─── Ir para o Aviator ────────────────────────────────────────────────────
     def navigate_to_aviator(self):
