@@ -194,6 +194,15 @@ class AviatorScraper:
             except NoSuchElementException:
                 continue
         
+        # SUCESSO ADICIONAL: Se o popup do Hades/Smartico estiver na tela, com certeza logou
+        try:
+            hades = self.driver.find_element(By.XPATH, "//a[@href='dp:close']")
+            if hades.is_displayed():
+                log.info("Indicador de login detectado: Popup Hades/Smartico visível.")
+                return True
+        except NoSuchElementException:
+            pass
+
         # Se não achou logado, verifica se o botão de Entrar ainda está lá
         for xpath in not_logged_indicators:
             try:
@@ -318,20 +327,18 @@ class AviatorScraper:
 
         time.sleep(0.5)
 
-        # Tenta clicar no botão de enviar (múltiplas tentativas)
+        # ─── FASE 1: Submissão (Clique Único) ───
         log.info("Tentando submeter formulário de login...")
-        submit_clicked = False
+        submitted = False
         for i in range(3):
-            # Clica em Enviar (seletores variados)
+            # Tenta clicar no botão de enviar
             if self._try_click("//*[@id='legitimuz-action-send-analisys']", "Submit ID", timeout=5):
-                submit_clicked = True
+                submitted = True
             elif self._try_click("//button[@type='submit']", "Submit type=submit", timeout=3):
-                submit_clicked = True
-            elif self._try_click("//button[normalize-space(.)='Entrar']", "Submit texto=Entrar", timeout=3):
-                submit_clicked = True
+                submitted = True
             
-            # Backup via JavaScript
-            if not submit_clicked:
+            # Backup via JavaScript se o clique físico falhar
+            if not submitted:
                 try:
                     self.driver.execute_script("""
                         var btn = document.getElementById('legitimuz-action-send-analisys') || 
@@ -340,31 +347,45 @@ class AviatorScraper:
                         if (btn) btn.click();
                     """)
                     log.info("Clique de submit via JS enviado.")
-                    submit_clicked = True
+                    submitted = True
                 except Exception:
                     pass
+            
+            if submitted:
+                break
+            time.sleep(2)
 
-            # ANTES de checar login, limpa possíveis popups bloqueadores
+        if not submitted:
+            log.error("Não foi possível clicar no botão de Submit.")
+            raise Exception("Erro de interface: Botão de submit não responde.")
+
+        # ─── FASE 2: Policiamento/Verificação (Aguardando autenticação) ───
+        log.info("Aguardando processamento do login (máx 30s)...")
+        authenticated = False
+        for sec in range(15):  # 15 iterações de 2s = 30 segundos
+            # 1. Tenta fechar popups que bloqueiam a visão do login
             self.handle_post_login_popups()
 
-            # Aguarda um pouco para ver se logou
+            # 2. Verifica se logou
             if self.is_logged_in():
-                log.info("✅ Verificação de Login: SUCESSO!")
+                log.info(f"✅ Login confirmado após {sec*2}s!")
+                authenticated = True
                 break
-            else:
-                log.warning(f"⚠️  Tentativa {i+1} de login falhou. Retentando clique...")
+            
+            log.info(f"   [{sec*2}s] Aguardando autenticação...")
+            time.sleep(2)
 
-        if not self.is_logged_in():
-            log.error("❌ Falha crítica: Não foi possível realizar o login após as tentativas.")
-            raise Exception("Erro de autenticação: Falha ao confirmar login.")
+        if not authenticated:
+            log.error("❌ Falha crítica: Tempo esgotado sem confirmação de login.")
+            raise Exception("Erro de autenticação: Timeout ao confirmar sessão.")
 
-        # Aguarda finalização dos processos de login
+        # Aguarda estabilizar final
         time.sleep(2)
 
-        # Fecha banners residuais (Indique e ganhe, etc)
+        # Limpeza final de popups residuais
         self.handle_initial_popups() 
 
-        log.info(f"✅ Sessão autenticada. URL: {self.driver.current_url}")
+        log.info(f"✅ Sessão autenticada com sucesso. URL: {self.driver.current_url}")
 
     # ─── Ir para o Aviator ────────────────────────────────────────────────────
     def navigate_to_aviator(self):
