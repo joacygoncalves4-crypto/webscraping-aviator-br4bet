@@ -523,11 +523,13 @@ class AviatorScraper:
         Tenta ler os multiplicadores do histórico dentro do iframe.
         Retorna lista de floats (mais recente primeiro).
         """
+        all_attempts = []
         for selector in HISTORY_SELECTORS:
             try:
                 els = self.driver.find_elements(By.CSS_SELECTOR, selector)
                 if not els:
                     continue
+                all_attempts.append(f"{selector}: {len(els)} elementos")
                 values = []
                 for el in els:
                     try:
@@ -544,6 +546,10 @@ class AviatorScraper:
                     return values
             except Exception:
                 continue
+        if all_attempts:
+            log.debug(f"Seletores testados (sem valores válidos): {all_attempts}")
+        else:
+            log.warning("⚠️  Nenhum seletor encontrou elementos no DOM. Possível mudança no jogo Spribe.")
         return []
 
     # ─── Enviar para Webhook ──────────────────────────────────────────────────
@@ -569,6 +575,7 @@ class AviatorScraper:
         log.info("═══════════════════════════════════════════")
         log.info("   Monitoramento iniciado — aguardando...  ")
         log.info("═══════════════════════════════════════════")
+        log.info(f"⏱️  Watchdog resetado. last_webhook_time={int(self.last_webhook_time)}")
 
         consecutive_empties = 0
         max_empties = 30  # ~60s sem dados = reconectar iframe
@@ -655,6 +662,10 @@ class AviatorScraper:
             attempt += 1
             log.info(f"\n─── Tentativa #{attempt} ───")
             try:
+                # Reseta estado do watchdog e histórico a cada nova tentativa
+                self.last_webhook_time = time.time()
+                self.last_multipliers = []
+
                 self.setup_driver()
                 self.login()
                 self.navigate_to_aviator()
