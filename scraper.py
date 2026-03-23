@@ -27,6 +27,7 @@ from selenium.common.exceptions import (
 )
 from datetime import datetime
 from dotenv import load_dotenv
+from logging.handlers import RotatingFileHandler
 
 # ─── Carrega variáveis de ambiente ─────────────────────────────────────────────
 load_dotenv()
@@ -43,7 +44,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("aviator_scraper.log", encoding="utf-8"),
+        RotatingFileHandler("aviator_scraper.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"),
     ],
 )
 log = logging.getLogger(__name__)
@@ -86,6 +87,9 @@ class AviatorScraper:
 
     # ─── Driver ───────────────────────────────────────────────────────────────
     def setup_driver(self):
+        # Limpa processos zumbis anteriores se existirem
+        self.teardown()
+        
         log.info("Iniciando Chrome com undetected-chromedriver...")
         opts = uc.ChromeOptions()
         opts.add_argument("--no-sandbox")
@@ -515,6 +519,17 @@ class AviatorScraper:
         else:
             log.info("ℹ️  Sem iframe nível 2 — o jogo pode estar diretamente no nível 1.")
 
+        # ── NÍVEL 3: Dentro do jogo, algumas versões tem um level extra ───────
+        iframes_lvl3 = self.driver.find_elements(By.TAG_NAME, "iframe")
+        if iframes_lvl3:
+            for f in iframes_lvl3:
+                src = f.get_attribute("src") or ""
+                if any(kw in src.lower() for kw in ["aviator-next", "spribegaming.com/game", "game-launch"]):
+                    self.driver.switch_to.frame(f)
+                    log.info(f"✅ [nível 3] Entrou no iframe: {src[:80]}")
+                    time.sleep(3)
+                    break
+
         log.info("✅ Dentro do contexto do jogo Aviator. Pronto para monitorar.")
 
     # ─── Lê o Histórico ───────────────────────────────────────────────────────
@@ -563,7 +578,6 @@ class AviatorScraper:
             resp = requests.post(WEBHOOK_URL, json=payload, timeout=10)
             if resp.status_code in (200, 201, 202):
                 self.total_sent += 1
-                self.last_webhook_time = time.time()  # Reseta watchdog
                 log.info(f"✅ Vela enviada: {multiplier}x  (total: {self.total_sent})")
             else:
                 log.warning(f"⚠️  Webhook respondeu {resp.status_code}: {resp.text[:100]}")
@@ -608,16 +622,21 @@ class AviatorScraper:
                     continue
 
                 consecutive_empties = 0
+                
+                # Resetar watchdog ao detectar velas (garante estabilidade se o webhook falhar)
+                self.last_webhook_time = time.time()
 
                 if not self.last_multipliers:
                     log.info(f"Histórico inicial: {current[:5]}")
                     self.send_to_webhook(current[0])
                     self.last_multipliers = current
                 else:
-                    # Descobre velas novas (head da lista = mais recente)
+                    # Descobre velas novas (usa janela de 3 para evitar falha em velas idênticas)
                     new_candles = []
-                    for val in current:
-                        if self.last_multipliers and val == self.last_multipliers[0]:
+                    anchor = self.last_multipliers[:3]
+                    for i, val in enumerate(current):
+                        # Se encontrarmos a sequência âncora, chegamos nas velas velhas
+                        if current[i : i + len(anchor)] == anchor:
                             break
                         new_candles.append(val)
 
